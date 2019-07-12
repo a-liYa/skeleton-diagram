@@ -14,6 +14,7 @@ import android.graphics.Shader;
 import android.os.Build;
 import android.util.AttributeSet;
 import android.util.TypedValue;
+import android.view.View;
 import android.widget.FrameLayout;
 
 import com.aliya.skeleton.R;
@@ -24,9 +25,9 @@ import com.aliya.skeleton.R;
  * @author a_liYa
  * @date 2019-07-08 11:13.
  */
-public class ShimmerFrameLayout extends FrameLayout {
+public class ShimmerFrameLayout extends FrameLayout{
 
-    private int mTiltDegree = 20;
+    private int mTiltDegree = 20; // 垂直倾斜度 顺时针为正 : |/  逆时针为负 : \|
     private int mStartColor = getColor(R.color.shimmer_start_color);
     private int mCenterColor = getColor(R.color.shimmer_center_color);
     private int mEndColor = getColor(R.color.shimmer_end_color);
@@ -34,6 +35,7 @@ public class ShimmerFrameLayout extends FrameLayout {
     private int mShimmerWidth;
     private int mAnimationDuration = 1200;
     private int mRepeatDelay;
+    private float mAnimatedPercent;
     private boolean mAutoStart = true;
     private ValueAnimator mValueAnimator;
 
@@ -57,10 +59,10 @@ public class ShimmerFrameLayout extends FrameLayout {
         int shimmerWidth = dip2px(50);
 
         if (attrs != null) {
-            TypedArray a = getContext().obtainStyledAttributes(attrs, R.styleable.ShimmerLayout,
-                    0, 0);
+            final TypedArray a = getContext().obtainStyledAttributes(attrs,
+                    R.styleable.ShimmerLayout, 0, 0);
             try {
-                mTiltDegree = a.getInteger(R.styleable.ShimmerLayout_shimmer_angle, 20);
+                mTiltDegree = a.getInteger(R.styleable.ShimmerLayout_shimmer_angle, mTiltDegree);
                 mStartColor = a.getColor(R.styleable.ShimmerLayout_shimmer_start_color,
                         mStartColor);
                 mCenterColor = a.getColor(R.styleable.ShimmerLayout_shimmer_center_color,
@@ -94,28 +96,84 @@ public class ShimmerFrameLayout extends FrameLayout {
         if (width > 0) {
             mShimmerWidth = width;
             final int edgeColor = Color.TRANSPARENT;
-            mShimmerPaint.setShader(new LinearGradient(0, 0, mShimmerWidth, 0,
-                    new int[]{edgeColor, mStartColor, mCenterColor, mEndColor, edgeColor},
-                    new float[]{0, 0, 0.5f, 1, 1},
-                    Shader.TileMode.CLAMP));
+            mShimmerPaint.setShader(
+                    new LinearGradient(0, 0, mShimmerWidth, 0,
+                            new int[]{edgeColor, mStartColor, mCenterColor, mEndColor, edgeColor},
+                            new float[]{0, 0, 0.5f, 1, 1},
+                            Shader.TileMode.CLAMP));
+        }
+    }
+
+    public void startShimmer() {
+        mAutoStart = true;
+        if (mValueAnimator != null && !isShimmerStarted()) {
+            mValueAnimator.start();
+        }
+    }
+
+    public void stopShimmer() {
+        if (mValueAnimator != null && isShimmerStarted()) {
+            mValueAnimator.cancel();
+        }
+    }
+
+    public boolean isShimmerStarted() {
+        return mValueAnimator != null && mValueAnimator.isStarted();
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        maybeStartShimmer();
+    }
+
+    @Override
+    public void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        stopShimmer();
+    }
+
+    void maybeStartShimmer() {
+        if (mValueAnimator == null) {
+            mValueAnimator = ValueAnimator.ofFloat(0f,
+                    1f + (float) mRepeatDelay / mAnimationDuration);
+            mValueAnimator.setRepeatCount(ValueAnimator.INFINITE);
+            mValueAnimator.setDuration(mAnimationDuration + mRepeatDelay);
+
+            mValueAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                @Override
+                public void onAnimationUpdate(ValueAnimator animation) {
+                    invalidate();
+                }
+            });
+        }
+        if (mAutoStart && mShimmerWidth > 0 && getVisibility() == VISIBLE) {
+            startShimmer();
         }
     }
 
     @Override
-    protected void onFinishInflate() {
-        super.onFinishInflate();
-        mValueAnimator = ValueAnimator.ofFloat(0f,
-                1f + (float) mRepeatDelay / mAnimationDuration);
-        mValueAnimator.setRepeatCount(ValueAnimator.INFINITE);
-        mValueAnimator.setDuration(mAnimationDuration);
-
-        mValueAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
-            @Override
-            public void onAnimationUpdate(ValueAnimator animation) {
-                postInvalidate();
+    protected void onVisibilityChanged(View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+        if (mValueAnimator != null) {
+            if (visibility == VISIBLE) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    if (mValueAnimator.isPaused()) {
+                        mValueAnimator.resume();
+                    }
+                } else {
+                    maybeStartShimmer();
+                }
+            } else {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    if (!mValueAnimator.isPaused()) {
+                        mValueAnimator.pause();
+                    }
+                } else {
+                    stopShimmer();
+                }
             }
-        });
-        mValueAnimator.start();
+        }
     }
 
     @Override
@@ -125,25 +183,31 @@ public class ShimmerFrameLayout extends FrameLayout {
     }
 
     private void drawShimmer(Canvas canvas) {
-        float dx;
-        float animatedValue = mValueAnimator != null ? mValueAnimator.getAnimatedFraction() : 0f;
-        dx = offset(-calculateMaskWidth() / 2f, getWidth() + calculateMaskWidth() / 2f,
-                animatedValue);
+        if (mShimmerWidth <= 0 || !isShimmerStarted()) return;
+
+        final float animatedValue = (float) mValueAnimator.getAnimatedValue();
+        if (mAnimatedPercent > 1f && animatedValue > 1f) { // 动画间隔期间
+            return;
+        }
+        mAnimatedPercent = animatedValue;
+        final int width = getWidth();
+        final int height = getHeight();
+        final double tiltRadian = Math.toRadians(mTiltDegree);
+        final float shimmerRangeWidth = (float) (height * Math.tan(tiltRadian) +
+                mShimmerWidth / Math.cos(tiltRadian)); // |// = |/ + //
+        final float dx =
+                offset(-shimmerRangeWidth / 2f, width + shimmerRangeWidth / 2f, mAnimatedPercent);
 
         mShaderMatrix.reset();
-        mShaderMatrix.setRotate(mTiltDegree, getWidth() / 2f, getHeight() / 2f);
+        mShaderMatrix.setRotate(mTiltDegree, width / 2f, height / 2f);
         mShaderMatrix.postTranslate(dx, 0);
         mShimmerPaint.getShader().setLocalMatrix(mShaderMatrix);
-        canvas.drawRect(0, 0, getWidth(), getHeight(), mShimmerPaint);
+
+        canvas.drawRect(0, 0, width, height, mShimmerPaint);
     }
 
     private float offset(float start, float end, float percent) {
         return start + (end - start) * percent;
-    }
-
-    private int calculateMaskWidth() {
-        double radian = Math.toRadians(Math.abs(mTiltDegree));
-        return (int) (getHeight() * Math.tan(radian) + mShimmerWidth / Math.cos(radian) + 0.5);
     }
 
     public int dip2px(float dip) {
