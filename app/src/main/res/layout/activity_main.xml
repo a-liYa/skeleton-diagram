@@ -54,7 +54,7 @@
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:background="#f0f0f0" />
+            android:background="#d0d0d0" />
 
         <com.aliya.skeleton.shimmer.ShimmerFrameLayout
             android:layout_width="match_parent"
